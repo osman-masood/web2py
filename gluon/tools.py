@@ -967,6 +967,8 @@ class Auth(object):
         # ## table names to be used
 
         settings.password_field = 'password'
+        settings.email_field = 'email'
+
         settings.table_user_name = 'auth_user'
         settings.table_group_name = 'auth_group'
         settings.table_membership_name = 'auth_membership'
@@ -1334,6 +1336,7 @@ class Auth(object):
             signature_list = signature
         if not settings.table_user_name in db.tables:
             passfield = settings.password_field
+            email_field = settings.email_field
             extra_fields = settings.extra_fields.get(
                 settings.table_user_name,[])+signature_list
             if username or settings.cas_provider:
@@ -1343,7 +1346,7 @@ class Auth(object):
                           label=self.messages.label_first_name),
                     Field('last_name', length=128, default='',
                           label=self.messages.label_last_name),
-                    Field('email', length=512, default='',
+                    Field(email_field, length=512, default='',
                           label=self.messages.label_email),
                     Field('username', length=128, default='',
                           label=self.messages.label_username),
@@ -1376,7 +1379,7 @@ class Auth(object):
                           label=self.messages.label_first_name),
                     Field('last_name', length=128, default='',
                           label=self.messages.label_last_name),
-                    Field('email', length=512, default='',
+                    Field(email_field, length=512, default='',
                           label=self.messages.label_email),
                     Field(passfield, 'password', length=512,
                           readable=False, label=self.messages.label_password),
@@ -1402,11 +1405,11 @@ class Auth(object):
             table[passfield].requires = [
                 CRYPT(key=settings.hmac_key,
                       min_length=self.settings.password_min_length)]
-            table.email.requires = \
+            table[email_field].requires = \
                 [IS_EMAIL(error_message=self.messages.invalid_email),
-                 IS_NOT_IN_DB(db, table.email)]
+                 IS_NOT_IN_DB(db, table[email_field])]
             if not self.settings.email_case_sensitive:
-                table.email.requires.insert(1,IS_LOWER())
+                table[email_field].requires.insert(1,IS_LOWER())
             table.registration_key.default = ''
         settings.table_user = db[settings.table_user_name]
         if not settings.table_group_name in db.tables:
@@ -1563,10 +1566,11 @@ class Auth(object):
             If the user doesn't yet exist, then they are created.
         """
         table_user = self.settings.table_user
+        email_field = self.settings.email_field
         user = None
         checks = []
         # make a guess about who this user is
-        for fieldname in ['registration_id','username','email']:
+        for fieldname in ['registration_id', 'username', email_field]:
             if fieldname in table_user.fields() and keys.get(fieldname,None):
                 checks.append(fieldname)
                 user = user or table_user(**{fieldname:keys[fieldname]})
@@ -1578,7 +1582,7 @@ class Auth(object):
             user.update_record(**table_user._filter_fields(keys))
         elif checks:
             if not 'first_name' in keys and 'first_name' in table_user.fields:
-                keys['first_name'] = keys.get('username',keys.get('email','anonymous')).split('@')[0]
+                keys['first_name'] = keys.get('username',keys.get(email_field,'anonymous')).split('@')[0]
             user_id = table_user.insert(**table_user._filter_fields(keys))
             user =  self.user = table_user[user_id]
             if self.settings.create_user_groups:
@@ -1610,7 +1614,7 @@ class Auth(object):
         elif 'username' in table_user.fields:
             userfield = 'username'
         else:
-            userfield = 'email'
+            userfield = self.settings.email_field
         passfield = self.settings.password_field
         user = self.db(table_user[userfield] == username).select().first()
         if user:
@@ -1690,7 +1694,7 @@ class Auth(object):
             elif 'username' in table.fields:
                 userfield = 'username'
             else:
-                userfield = 'email'
+                userfield = self.settings.email_field
             # If ticket is a service Ticket and RENEW flag respected
             if ticket[0:3] == 'ST-' and \
                     not ((row.renew and renew) ^ renew):
@@ -1745,7 +1749,7 @@ class Auth(object):
         elif 'username' in table_user.fields:
             username = 'username'
         else:
-            username = 'email'
+            username = self.settings.email_field
         if 'username' in table_user.fields or \
                 not self.settings.login_email_validate:
             tmpvalidator = IS_NOT_EMPTY(error_message=self.messages.is_empty)
@@ -1990,6 +1994,8 @@ class Auth(object):
             log = self.messages.register_log
 
         passfield = self.settings.password_field
+        email_field = self.settings.email_field
+
         formstyle = self.settings.formstyle
         form = SQLFORM(table_user,
                        fields = self.settings.register_fields,
@@ -2033,7 +2039,7 @@ class Auth(object):
                 self.add_membership(self.settings.everybody_group_id, form.vars.id)
             if self.settings.registration_requires_verification:
                 if not self.settings.mailer or \
-                   not self.settings.mailer.send(to=form.vars.email,
+                   not self.settings.mailer.send(to=form.vars[email_field],
                         subject=self.messages.verify_email_subject,
                         message=self.messages.verify_email
                          % dict(key=key)):
@@ -2054,7 +2060,7 @@ class Auth(object):
                 if 'username' in table_user.fields:
                     username = 'username'
                 else:
-                    username = 'email'
+                    username = email_field
                 user = self.db(table_user[username] == form.vars[username]).select().first()
                 user = Storage(table_user._filter_fields(user, id=True))
                 session.auth = Storage(user=user, last_visit=request.now,
@@ -2137,6 +2143,8 @@ class Auth(object):
         """
 
         table_user = self.settings.table_user
+        email_field = self.settings.email_field
+
         if not 'username' in table_user.fields:
             raise HTTP(404)
         request = current.request
@@ -2155,11 +2163,11 @@ class Auth(object):
             onaccept = self.settings.retrieve_username_onaccept
         if log is DEFAULT:
             log = self.messages.retrieve_username_log
-        old_requires = table_user.email.requires
-        table_user.email.requires = [IS_IN_DB(self.db, table_user.email,
+        old_requires = table_user[email_field].requires
+        table_user[email_field].requires = [IS_IN_DB(self.db, table_user[email_field],
             error_message=self.messages.invalid_email)]
         form = SQLFORM(table_user,
-                       fields=['email'],
+                       fields=[email_field],
                        hidden = dict(_next=next),
                        showid=self.settings.showid,
                        submit_button=self.messages.submit_button,
@@ -2173,13 +2181,13 @@ class Auth(object):
         if form.accepts(request, session,
                         formname='retrieve_username', dbio=False,
                         onvalidation=onvalidation,hideerror=self.settings.hideerror):
-            user = self.db(table_user.email == form.vars.email).select().first()
+            user = self.db(table_user[email_field] == form.vars[email_field]).select().first()
             if not user:
                 current.session.flash = \
                     self.messages.invalid_email
                 redirect(self.url(args=request.args))
             username = user.username
-            self.settings.mailer.send(to=form.vars.email,
+            self.settings.mailer.send(to=form.vars[email_field],
                     subject=self.messages.retrieve_username_subject,
                     message=self.messages.retrieve_username
                      % dict(username=username))
@@ -2191,7 +2199,7 @@ class Auth(object):
             else:
                 next = replace_id(next, form)
             redirect(next)
-        table_user.email.requires = old_requires
+        table_user[email_field].requires = old_requires
         return form
 
     def random_password(self):
@@ -2236,11 +2244,11 @@ class Auth(object):
             onaccept = self.settings.retrieve_password_onaccept
         if log is DEFAULT:
             log = self.messages.retrieve_password_log
-        old_requires = table_user.email.requires
-        table_user.email.requires = [IS_IN_DB(self.db, table_user.email,
+        old_requires = table_user[email_field].requires
+        table_user[email_field].requires = [IS_IN_DB(self.db, table_user[email_field],
             error_message=self.messages.invalid_email)]
         form = SQLFORM(table_user,
-                       fields=['email'],
+                       fields=[email_field],
                        hidden = dict(_next=next),
                        showid=self.settings.showid,
                        submit_button=self.messages.submit_button,
@@ -2251,7 +2259,7 @@ class Auth(object):
         if form.accepts(request, session,
                         formname='retrieve_password', dbio=False,
                         onvalidation=onvalidation,hideerror=self.settings.hideerror):
-            user = self.db(table_user.email == form.vars.email).select().first()
+            user = self.db(table_user[email_field] == form.vars[email_field]).select().first()
             if not user:
                 current.session.flash = \
                     self.messages.invalid_email
@@ -2266,7 +2274,7 @@ class Auth(object):
                  'registration_key': ''}
             user.update_record(**d)
             if self.settings.mailer and \
-               self.settings.mailer.send(to=form.vars.email,
+               self.settings.mailer.send(to=form.vars[email_field],
                         subject=self.messages.retrieve_password_subject,
                         message=self.messages.retrieve_password \
                         % dict(password=password)):
@@ -2280,7 +2288,7 @@ class Auth(object):
             else:
                 next = replace_id(next, form)
             redirect(next)
-        table_user.email.requires = old_requires
+        table_user[email_field].requires = old_requires
         return form
 
     def reset_password(
@@ -2352,6 +2360,8 @@ class Auth(object):
         """
 
         table_user = self.settings.table_user
+        email_field = self.settings.email_field
+
         request = current.request
         response = current.response
         session = current.session
@@ -2369,12 +2379,12 @@ class Auth(object):
             onaccept = self.settings.reset_password_onaccept
         if log is DEFAULT:
             log = self.messages.reset_password_log
-        table_user.email.requires = [
+        table_user[email_field].requires = [
             IS_EMAIL(error_message=self.messages.invalid_email),
-            IS_IN_DB(self.db, table_user.email,
+            IS_IN_DB(self.db, table_user[email_field],
                      error_message=self.messages.invalid_email)]
         form = SQLFORM(table_user,
-                       fields=['email'],
+                       fields=[email_field],
                        hidden = dict(_next=next),
                        showid=self.settings.showid,
                        submit_button=self.messages.password_reset_button,
@@ -2388,7 +2398,7 @@ class Auth(object):
                         formname='reset_password', dbio=False,
                         onvalidation=onvalidation,
                         hideerror=self.settings.hideerror):
-            user = self.db(table_user.email == form.vars.email).select().first()
+            user = self.db(table_user[email_field] == form.vars[email_field]).select().first()
             if not user:
                 session.flash = self.messages.invalid_email
                 redirect(self.url(args=request.args))
@@ -2406,12 +2416,12 @@ class Auth(object):
             else:
                 next = replace_id(next, form)
             redirect(next)
-        # old_requires = table_user.email.requires
+        # old_requires = table_user[email_field].requires
         return form
 
     def email_reset_password(self,user):
         reset_password_key = str(int(time.time()))+'-' + web2py_uuid()
-        if self.settings.mailer.send(to=user.email,
+        if self.settings.mailer.send(to=user[self.settings.email_field],
                                      subject=self.messages.reset_password_subject,
                                      message=self.messages.reset_password % \
                                          dict(key=reset_password_key)):

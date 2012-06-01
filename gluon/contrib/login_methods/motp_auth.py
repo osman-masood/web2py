@@ -5,6 +5,7 @@ from hashlib import md5
 from gluon.dal import DAL
 
 def motp_auth(db=DAL('sqlite://storage.sqlite'),
+              email_field = 'email',
               time_offset=60):
               
     """
@@ -91,7 +92,7 @@ def motp_auth(db=DAL('sqlite://storage.sqlite'),
                       db=db,
                       offset=time_offset):
         if db:
-            user_data =  db(db.auth_user.email == email ).select().first()
+            user_data =  db(db.auth_user[email_field] == email ).select().first()
             if user_data:
                 if user_data['motp_secret'] and user_data['motp_pin']:
                     motp_secret = user_data['motp_secret']

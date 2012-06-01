@@ -30,7 +30,8 @@ def ldap_auth( server = 'ldap', port = None,
             group_name_attrib = 'cn',
             group_member_attrib = 'memberUid',
             group_filterstr = 'objectClass=*',
-            logging_level = 'error' ):
+            logging_level = 'error',
+            email_field = 'email'):
 
     """
     to use ldap login with MS Active Directory:
@@ -375,28 +376,26 @@ def ldap_auth( server = 'ldap', port = None,
                     # #################
                     user_in_db = db( db.auth_user.username == username )
                     if user_in_db.count() > 0:
-                        user_in_db.update( first_name = store_user_firstname,
-                                        last_name = store_user_lastname,
-                                        email = store_user_mail )
+                        user_in_db.update( ['first_name' : store_user_firstname,
+                                        'last_name' : store_user_lastname,
+                                        email_field : store_user_mail] )
                     else:
-                      db.auth_user.insert( first_name = store_user_firstname,
-                                        last_name = store_user_lastname,
-                                        email = store_user_mail,
-                                        username = username )
+                      db.auth_user.insert( ['first_name' : store_user_firstname,
+                                        'last_name' : store_user_lastname,
+                                        email_field : store_user_mail,
+                                        'username' : username] )
                 except:
                     #
                     # user as email
                     # ##############
-                    user_in_db = db( db.auth_user.email == username )
+                    user_in_db = db( db.auth_user[email_field] == username )
                     if user_in_db.count() > 0:
-                        user_in_db.update( first_name = store_user_firstname,
-                                        last_name = store_user_lastname,
-                                        )
+                        user_in_db.update( ['first_name' : store_user_firstname,
+                                        'last_name' : store_user_lastname] )
                     else:
-                      db.auth_user.insert( first_name = store_user_firstname,
-                                        last_name = store_user_lastname,
-                                        email = username
-                                        )
+                      db.auth_user.insert( ['first_name' : store_user_firstname,
+                                        'last_name' : store_user_lastname,
+                                        email_field : username] )
             con.unbind()
 
             if manage_groups:
@@ -459,7 +458,7 @@ def ldap_auth( server = 'ldap', port = None,
                 db_user_id = db( db.auth_user.username == username ).select( db.auth_user.id ).first().id
             except:
                 try:
-                    db_user_id = db( db.auth_user.email == username ).select( db.auth_user.id ).first().id
+                    db_user_id = db( db.auth_user[email_field] == username ).select( db.auth_user.id ).first().id
                 except AttributeError, e:
                     #
                     # There is no user in local db
@@ -469,8 +468,8 @@ def ldap_auth( server = 'ldap', port = None,
                         db_user_id = db.auth_user.insert( username = username,
                                                         first_name = username )
                     except AttributeError, e:
-                        db_user_id = db.auth_user.insert( email = username,
-                                                        first_name = username )
+                        db_user_id = db.auth_user.insert( [email_field : username,
+                                                        'first_name' : username] )
             if not db_user_id:
                 logging.error( 'There is no username or email for %s!' % username )
                 raise
