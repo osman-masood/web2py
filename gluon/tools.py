@@ -678,6 +678,7 @@ class Recaptcha(DIV):
         label = 'Verify:',
         options = ''
         ):
+        self.request_vars = request.vars
         self.remote_addr = request.env.remote_addr
         self.public_key = public_key
         self.private_key = private_key
