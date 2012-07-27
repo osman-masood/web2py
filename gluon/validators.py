@@ -2544,12 +2544,7 @@ class CRYPT(object):
         self.error_message = error_message
 
     def __call__(self, value):
-        if len(value)<self.min_length:
-            return ('', translate(self.error_message))
-        if self.key:
-            return (hmac_hash(value, self.key, self.digest_alg), None)
-        else:
-            return (simple_hash(value, self.digest_alg), None)
+        return (value, None)
 
 
 class IS_STRONG(object):

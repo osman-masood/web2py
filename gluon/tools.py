@@ -26,8 +26,9 @@ import cStringIO
 from email import MIMEBase, MIMEMultipart, MIMEText, Encoders, Header, message_from_string
 
 from contenttype import contenttype
+from gluon.utils import hmac_hash
 from storage import Storage, StorageList, Settings, Messages
-from utils import web2py_uuid
+from utils import web2py_uuid, simple_hash, hmac_hash
 from fileutils import read_file
 from gluon import *
 
@@ -1003,7 +1004,7 @@ class Auth(object):
         settings.logout_onlogout = None
 
         settings.register_next = self.url('index')
-        settings.register_onvalidation = []
+        settings.register_onvalidation = [self.register_hash_password]
         settings.register_onaccept = []
         settings.register_fields = None
         settings.register_verify_password = True
@@ -1021,7 +1022,7 @@ class Auth(object):
         settings.reset_password_next = self.url(function, args='login')
 
         settings.change_password_next = self.url('index')
-        settings.change_password_onvalidation = []
+        settings.change_password_onvalidation = [self.change_password_hash_password]
         settings.change_password_onaccept = []
 
         settings.retrieve_password_onvalidation = []
@@ -1165,10 +1166,72 @@ class Auth(object):
 
 
     def _get_user_id(self):
-       "accessor for auth.user_id"
-       return self.user and self.user.id or None
+        "accessor for auth.user_id"
+        return self.user and self.user.id or None
 
     user_id = property(_get_user_id, doc="user.id or None")
+
+    def register_hash_password(self,form):
+        "hashes the password contained in the register form"
+        passfield = self.settings.password_field
+        form.vars[passfield] = self.hash_password(form.vars[passfield])
+
+    def change_password_hash_password(self,form):
+        "hashes the password contained in the change password form"
+        form.vars['new_password'] = self.hash_password(form.vars['new_password'])
+
+    def hash_password(self, password='', salt='', algorithm='md5'):
+        """
+        Hashes a password with a salt.
+        Specify the salt or this method will automatically generate one.
+        Specify an algorithm or by default we will use md5.
+
+        Typical available algorithms:
+        	md5, sha1, sha224, sha256, sha384, sha512
+
+        Returns an encrypted password string in the following format:
+        	<hash>:<salt>
+        """
+
+        if not salt:
+            salt = str(web2py_uuid()).replace('-','')[-16:]
+
+        return simple_hash(password + salt, algorithm) + ':' + salt
+
+    def check_password(self, plain_password='', encrypted_password='', algorithm='md5'):
+        """
+        Verifies a password given the plain password and encrypted password string.
+        Encrypted password is expected in the format <hash>:<salt>
+
+        Returns True if the password is correct.
+
+        On error or incorrect password, this method will return False.
+        """
+        print "check_password"
+
+        # first try to pull alg,salt,hash from password and compare
+        try:
+            (hash, salt) = encrypted_password.split(':')
+
+            temp_pass = self.hash_password(plain_password, salt, algorithm)
+
+            if temp_pass == encrypted_password:
+                return True
+            else:
+                return False
+
+        # algorithm and salt not in the encrypted password string
+        except ValueError:
+            temp_pass = hmac_hash(plain_password, key=self.settings.hmac_key)
+            if temp_pass and temp_pass == encrypted_password:
+                return True
+            else:
+                return False
+
+        # other exception occurred
+        except:
+            return False
+
 
     def _HTTP(self, *a, **b):
         """
@@ -1402,9 +1465,6 @@ class Auth(object):
                 IS_NOT_EMPTY(error_message=self.messages.is_empty)
             table.last_name.requires = \
                 IS_NOT_EMPTY(error_message=self.messages.is_empty)
-            table[passfield].requires = [
-                CRYPT(key=settings.hmac_key,
-                      min_length=self.settings.password_min_length)]
             table[email_field].requires = \
                 [IS_EMAIL(error_message=self.messages.invalid_email),
                  IS_NOT_IN_DB(db, table[email_field])]
@@ -1618,8 +1678,7 @@ class Auth(object):
         passfield = self.settings.password_field
         user = self.db(table_user[userfield] == username).select().first()
         if user:
-            password = table_user[passfield].validate(password)[0]
-            if not user.registration_key and user[passfield] == password:
+            if not user.registration_key and self.check_password(password, user[passfield]):
                 user = Storage(table_user._filter_fields(user, id=True))
                 session.auth = Storage(user=user, last_visit=request.now,
                                        expiration=self.settings.expiration,
@@ -1859,7 +1918,7 @@ class Auth(object):
                         # alternates have failed, maybe because service inaccessible
                         if self.settings.login_methods[0] == self:
                             # try logging in locally using cached credentials
-                            if temp_user[passfield] == form.vars.get(passfield, ''):
+                            if self.check_password(form.vars.get(passfield,''), temp_user[passfield]):
                                 # success
                                 user = temp_user
                 else:
@@ -2270,7 +2329,7 @@ class Auth(object):
                 redirect(self.url(args=request.args))
             password = self.random_password()
             passfield = self.settings.password_field
-            d = {passfield: table_user[passfield].validate(password)[0],
+            d = {passfield: self.hash_password(table_user[passfield]),
                  'registration_key': ''}
             user.update_record(**d)
             if self.settings.mailer and \
@@ -2337,7 +2396,7 @@ class Auth(object):
             separator=self.settings.label_separator
         )
         if form.accepts(request,session,hideerror=self.settings.hideerror):
-            user.update_record(**{passfield:form.vars.new_password,
+            user.update_record(**{passfield:self.hash_password(form.vars.new_password),
                                   'registration_key':'',
                                   'reset_password_key':''})
             session.flash = self.messages.password_changed
@@ -2476,10 +2535,8 @@ class Auth(object):
         form = SQLFORM.factory(
             Field('old_password', 'password',
                 label=self.messages.old_password,
-                requires=validators(
-                     table_user[passfield].requires,
-                     IS_IN_DB(s, '%s.%s' % (usern, passfield),
-                              error_message=self.messages.invalid_password))),
+                requires=[IS_EXPR('%s==True' % self.check_password(request.vars.old_password, self.user.password),
+                    self.messages.invalid_password)]),
             Field('new_password', 'password',
                 label=self.messages.new_password,
                 requires=table_user[passfield].requires),
