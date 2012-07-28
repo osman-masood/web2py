@@ -1208,7 +1208,6 @@ class Auth(object):
 
         On error or incorrect password, this method will return False.
         """
-        print "check_password"
 
         # first try to pull alg,salt,hash from password and compare
         try:
